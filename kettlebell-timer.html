@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kettlebell Workout Timer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-orange-500 to-red-600">
+    <div class="p-4 md:p-8">
+        <div class="max-w-2xl mx-auto">
+            <h1 class="text-3xl md:text-4xl font-bold text-white text-center mb-2">
+                Kettlebell Workout Timer
+            </h1>
+            <p class="text-white text-center mb-6 text-sm opacity-90">
+                40-Minute Full Body Workout • 3 Rounds
+            </p>
+            <div id="app"></div>
+        </div>
+    </div>
+
+    <script>
+        const warmupExercises = [
+            { name: 'Arm circles', duration: 45, note: 'each direction', doubleTime: true, image: 'images/Arm circless.webp' },
+            { name: 'Kneeling hip flexor to hamstring stretch', duration: 45, note: 'each side', doubleTime: true, image: 'images/Kneeling hip flexor to hamstring stretch.jpg' },
+            { name: 'Bodyweight squats', duration: 60, note: '25 reps', doubleTime: false, image: 'images/Bodyweight squats.webp' },
+            { name: 'Glute bridges', duration: 45, note: '15-20 reps', doubleTime: false, image: 'images/Glute bridge.webp' },
+            { name: 'Cat-cows', duration: 45, note: '', doubleTime: false, image: 'images/Cat Cow.webp' }
+        ];
+
+        const cooldownExercises = [
+            { name: 'Downward Dog', duration: 45, note: '', doubleTime: false, image: 'Downward dog.jpg' },
+            { name: 'Pigeon Stretch', duration: 45, note: 'each side', doubleTime: true, image: 'images/Pigeon Stretch.webp' },
+            { name: 'Hip flexor to Hamstring stretch', duration: 45, note: 'each side', doubleTime: true, image: 'images/Kneeling hip flexor to hamstring stretch.jpg' },
+            { name: 'Standing quad stretch', duration: 45, note: 'per leg', doubleTime: true, image: 'images/Standing quad stretch.jpg' },
+            { name: 'Puppy Pose', duration: 45, note: '', doubleTime: false, image: 'images/Puppy Pose.avif' },
+            { name: 'Deep Breathing', duration: 90, note: '', doubleTime: false, image: 'images/Deep Breathing.jpg' }
+        ];
+
+        const workoutExercises = [
+            { name: 'Kettlebell Swings', work: 50, rest: 25, image: 'images/Swings.webp' },
+            { name: 'Kettlebell Goblet Squat to Press', work: 50, rest: 25, image: 'images/Kettlebell Goblet Squat to Press.jpg' },
+            { name: 'Kettlebell One Arm Press', work: 50, rest: 25, image: 'images/One arm press.gif' },
+            { name: 'Kettlebell Deadlift', work: 50, rest: 25, image: 'images/Deadlift.avif' },
+            { name: 'Kettlebell Reverse Lunge + Curl', work: 50, rest: 25, image: 'images/Lunge and Curl.gif' }
+        ];
+
+        let state = {
+            phase: 'ready',
+            isRunning: false,
+            timeLeft: 0,
+            currentExerciseIndex: 0,
+            currentRound: 1,
+            isRest: false,
+            totalRounds: 3,
+            interval: null,
+            audioEnabled: true,
+            beepPlayed: false,
+            halfwayAnnounced: false
+        };
+
+        // Audio announcements using Web Speech API
+        function speak(text) {
+            if (!state.audioEnabled || !('speechSynthesis' in window)) return;
+            
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            
+            // Get available voices and select a female voice
+            const voices = window.speechSynthesis.getVoices();
+            const femaleVoice = voices.find(voice => 
+                voice.name.includes('Female') || 
+                voice.name.includes('Samantha') ||
+                voice.name.includes('Victoria') ||
+                voice.name.includes('Karen') ||
+                voice.name.includes('Moira') ||
+                voice.name.includes('Fiona') ||
+                voice.lang.startsWith('en') && voice.name.includes('female')
+            ) || voices.find(voice => voice.lang.startsWith('en'));
+            
+            if (femaleVoice) {
+                utterance.voice = femaleVoice;
+            }
+            
+            utterance.rate = 1.1;  // Slightly faster for energy
+            utterance.pitch = 1.2;  // Higher pitch for female voice
+            utterance.volume = 1.0;
+            window.speechSynthesis.speak(utterance);
+        }
+        
+        // Load voices when they become available
+        if ('speechSynthesis' in window) {
+            speechSynthesis.onvoiceschanged = () => {
+                speechSynthesis.getVoices();
+            };
+        }
+
+        // Beep sound for countdown
+        function beep(frequency = 800, duration = 100) {
+            if (!state.audioEnabled) return;
+            
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.value = frequency;
+            oscillator.type = 'sine';
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration / 1000);
+            
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + duration / 1000);
+        }
+
+        function getActualDuration(exercise) {
+            if (exercise.doubleTime) {
+                return exercise.duration * 2;
+            }
+            return exercise.duration;
+        }
+
+        function render() {
+            const app = document.getElementById('app');
+            
+            if (state.phase === 'ready') {
+                app.innerHTML = `
+                    <div class="bg-white rounded-lg shadow-xl p-6 md:p-8 text-center">
+                        <h2 class="text-2xl md:text-3xl font-bold text-gray-800 mb-4">Ready to Start?</h2>
+                        <p class="text-gray-600 mb-6">Choose where to begin your workout</p>
+                        
+                        <div class="mb-6 flex items-center justify-center gap-3">
+                            <label class="flex items-center cursor-pointer">
+                                <input type="checkbox" ${state.audioEnabled ? 'checked' : ''} onchange="toggleAudio()" class="w-5 h-5 mr-2">
+                                <span class="text-gray-700">Audio Cues ${state.audioEnabled ? '🔊' : '🔇'}</span>
+                            </label>
+                        </div>
+
+                        <div class="space-y-3">
+                            <button onclick="startWarmup()" class="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 md:py-4 px-6 rounded-lg text-lg md:text-xl transition">
+                                Start Warm-Up (8 min)
+                            </button>
+                            <button onclick="skipToWorkout()" class="w-full bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded-lg transition">
+                                Skip to Main Workout
+                            </button>
+                        </div>
+                    </div>
+                `;
+            } else if (state.phase === 'ready-workout') {
+                app.innerHTML = `
+                    <div class="bg-white rounded-lg shadow-xl p-6 md:p-8 text-center">
+                        <h2 class="text-2xl md:text-3xl font-bold text-gray-800 mb-4">Start Main Workout?</h2>
+                        <div class="bg-gray-100 rounded-lg p-4 mb-6">
+                            <p class="text-gray-700 font-semibold mb-2">Format: 50s work / 25s rest</p>
+                            <p class="text-gray-600 text-sm">Complete 3 rounds of 5 exercises</p>
+                        </div>
+                        <button onclick="startWorkout()" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 md:py-4 px-6 rounded-lg text-lg md:text-xl transition">
+                            Start Workout
+                        </button>
+                    </div>
+                `;
+            } else if (state.phase === 'ready-cooldown') {
+                app.innerHTML = `
+                    <div class="bg-white rounded-lg shadow-xl p-6 md:p-8 text-center">
+                        <h2 class="text-2xl md:text-3xl font-bold text-gray-800 mb-4">Ready to Cool Down?</h2>
+                        <div class="bg-green-50 rounded-lg p-4 mb-6">
+                            <p class="text-gray-700 font-semibold mb-2">Great workout! 🎉</p>
+                            <p class="text-gray-600 text-sm">Take 8-10 minutes to stretch and recover</p>
+                        </div>
+                        <div class="space-y-3">
+                            <button onclick="startCooldown()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 md:py-4 px-6 rounded-lg text-lg md:text-xl transition">
+                                Start Cool Down
+                            </button>
+                            <button onclick="skipComplete()" class="w-full bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded-lg transition">
+                                Skip Cool Down
+                            </button>
+                        </div>
+                    </div>
+                `;
+            } else if (state.phase === 'warmup') {
+                const ex = warmupExercises[state.currentExerciseIndex];
+                const actualDuration = getActualDuration(ex);
+                app.innerHTML = `
+                    <div class="bg-white rounded-lg shadow-xl p-6 md:p-8">
+                        ${ex.image ? `
+                        <div class="mb-6 flex justify-center bg-gray-50 p-4 rounded-lg">
+                            <div class="text-center">
+                                <img src="${ex.image}" alt="${ex.name}" class="rounded-lg max-h-80 mx-auto object-contain" onerror="this.parentElement.innerHTML='<div class=\'text-gray-400 text-sm\'>📋 ${ex.name}<br>Image not available</div>'">
+                            </div>
+                        </div>
+                        ` : ''}
+                        <div class="text-center mb-6">
+                            <div class="inline-block bg-orange-100 text-orange-600 px-4 py-1 rounded-full text-sm font-semibold mb-3">
+                                WARM-UP
+                            </div>
+                            <div class="text-sm text-gray-500 mb-3">
+                                Exercise ${state.currentExerciseIndex + 1} of ${warmupExercises.length}
+                            </div>
+                            <h2 class="text-2xl md:text-3xl font-bold text-gray-800 mb-2">${ex.name}</h2>
+                            ${ex.note ? `<p class="text-gray-600 text-sm">${ex.note}</p>` : ''}
+                            ${ex.doubleTime ? `<p class="text-orange-600 text-xs mt-1 font-semibold">Total: ${actualDuration}s (${ex.duration}s ${ex.note})</p>` : ''}
+                        </div>
+                        <div class="text-center mb-6">
+                            <div class="text-6xl md:text-7xl font-bold text-orange-500 mb-4">${state.timeLeft}s</div>
+                            <div class="flex items-center justify-center gap-4 mb-4">
+                                <label class="flex items-center cursor-pointer">
+                                    <input type="checkbox" ${state.audioEnabled ? 'checked' : ''} onchange="toggleAudio()" class="w-4 h-4 mr-2">
+                                    <span class="text-sm text-gray-600">${state.audioEnabled ? '🔊' : '🔇'}</span>
+                                </label>
+                            </div>
+                            <div class="flex flex-wrap justify-center gap-3">
+                                <button onclick="togglePause()" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-2 md:py-3 px-4 md:px-6 rounded-lg transition">
+                                    ${state.isRunning ? 'Pause' : 'Resume'}
+                                </button>
+                                <button onclick="skipExercise()" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 md:py-3 px-4 md:px-6 rounded-lg transition">
+                                    Skip
+                                </button>
+                                <button onclick="reset()" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 md:py-3 px-4 md:px-6 rounded-lg transition">
+                                    Reset
+                                </button>
+                            </div>
+                        </div>
+                        <div class="mt-6 pt-6 border-t border-gray-200">
+                            <p class="text-xs text-gray-500 text-center">
+                                Next: ${state.currentExerciseIndex < warmupExercises.length - 1 ? warmupExercises[state.currentExerciseIndex + 1].name : 'Main Workout'}
+                            </p>
+                        </div>
+                    </div>
+                `;
+            } else if (state.phase === 'workout') {
+                const ex = workoutExercises[state.currentExerciseIndex];
+                const progress = (state.timeLeft / (state.isRest ? ex.rest : ex.work)) * 100;
+                app.innerHTML = `
+                    <div class="bg-white rounded-lg shadow-xl p-6 md:p-8">
+                        ${!state.isRest && ex.image ? `
+                        <div class="mb-6 flex justify-center bg-gray-50 p-4 rounded-lg">
+                            <div class="text-center">
+                                <img src="${ex.image}" alt="${ex.name}" class="rounded-lg max-h-80 mx-auto object-contain" onerror="this.parentElement.innerHTML='<div class=\'text-gray-400 text-sm\'>💪 ${ex.name}<br>Image not available</div>'">
+                            </div>
+                        </div>
+                        ` : ''}
+                        <div class="text-center mb-6">
+                            <div class="inline-block bg-gray-100 px-4 py-1 rounded-full text-sm font-semibold mb-3 text-gray-700">
+                                ROUND ${state.currentRound} of ${state.totalRounds}
+                            </div>
+                            <div class="inline-block px-4 py-1 rounded-full text-sm font-bold mb-4 ml-2 ${state.isRest ? 'bg-blue-100 text-blue-600' : 'bg-red-100 text-red-600'}">
+                                ${state.isRest ? 'REST' : 'WORK'}
+                            </div>
+                            <h2 class="text-2xl md:text-3xl font-bold text-gray-800 mb-2">${ex.name}</h2>
+                            <p class="text-gray-600 text-sm">Exercise ${state.currentExerciseIndex + 1} of ${workoutExercises.length}</p>
+                        </div>
+                        <div class="text-center mb-6">
+                            <div class="text-6xl md:text-7xl font-bold mb-4 ${state.isRest ? 'text-blue-500' : 'text-red-600'}">${state.timeLeft}s</div>
+                            <div class="w-full bg-gray-200 rounded-full h-3 mb-6">
+                                <div class="h-3 rounded-full transition-all ${state.isRest ? 'bg-blue-500' : 'bg-red-600'}" style="width: ${progress}%"></div>
+                            </div>
+                            <div class="flex items-center justify-center gap-4 mb-4">
+                                <label class="flex items-center cursor-pointer">
+                                    <input type="checkbox" ${state.audioEnabled ? 'checked' : ''} onchange="toggleAudio()" class="w-4 h-4 mr-2">
+                                    <span class="text-sm text-gray-600">${state.audioEnabled ? '🔊' : '🔇'}</span>
+                                </label>
+                            </div>
+                            <div class="flex flex-wrap justify-center gap-3">
+                                <button onclick="togglePause()" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 md:py-3 px-4 md:px-6 rounded-lg transition">
+                                    ${state.isRunning ? 'Pause' : 'Resume'}
+                                </button>
+                                <button onclick="skipExercise()" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 md:py-3 px-4 md:px-6 rounded-lg transition">
+                                    Skip
+                                </button>
+                                <button onclick="reset()" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 md:py-3 px-4 md:px-6 rounded-lg transition">
+                                    Reset
+                                </button>
+                            </div>
+                        </div>
+                        <div class="mt-6 pt-6 border-t border-gray-200">
+                            <p class="text-xs text-gray-500 text-center">
+                                ${state.isRest ? `Next: ${state.currentExerciseIndex < workoutExercises.length - 1 ? workoutExercises[state.currentExerciseIndex + 1].name : state.currentRound < state.totalRounds ? `Round ${state.currentRound + 1} - ${workoutExercises[0].name}` : 'Cool Down'}` : 'Rest period coming up'}
+                            </p>
+                        </div>
+                    </div>
+                `;
+            } else if (state.phase === 'cooldown') {
+                const ex = cooldownExercises[state.currentExerciseIndex];
+                const actualDuration = getActualDuration(ex);
+                app.innerHTML = `
+                    <div class="bg-white rounded-lg shadow-xl p-6 md:p-8">
+                        ${ex.image ? `
+                        <div class="mb-6 flex justify-center bg-gray-50 p-4 rounded-lg">
+                            <div class="text-center">
+                                <img src="${ex.image}" alt="${ex.name}" class="rounded-lg max-h-80 mx-auto object-contain" onerror="this.parentElement.innerHTML='<div class=\'text-gray-400 text-sm\'>🧘 ${ex.name}<br>Image not available</div>'">
+                            </div>
+                        </div>
+                        ` : ''}
+                        <div class="text-center mb-6">
+                            <div class="inline-block bg-green-100 text-green-600 px-4 py-1 rounded-full text-sm font-semibold mb-3">
+                                COOL DOWN
+                            </div>
+                            <div class="text-sm text-gray-500 mb-3">
+                                Stretch ${state.currentExerciseIndex + 1} of ${cooldownExercises.length}
+                            </div>
+                            <h2 class="text-2xl md:text-3xl font-bold text-gray-800 mb-2">${ex.name}</h2>
+                            ${ex.note ? `<p class="text-gray-600 text-sm">${ex.note}</p>` : ''}
+                            ${ex.doubleTime ? `<p class="text-green-600 text-xs mt-1 font-semibold">Total: ${actualDuration}s (${ex.duration}s ${ex.note})</p>` : ''}
+                        </div>
+                        <div class="text-center mb-6">
+                            <div class="text-6xl md:text-7xl font-bold text-green-500 mb-4">${state.timeLeft}s</div>
+                            <div class="flex items-center justify-center gap-4 mb-4">
+                                <label class="flex items-center cursor-pointer">
+                                    <input type="checkbox" ${state.audioEnabled ? 'checked' : ''} onchange="toggleAudio()" class="w-4 h-4 mr-2">
+                                    <span class="text-sm text-gray-600">${state.audioEnabled ? '🔊' : '🔇'}</span>
+                                </label>
+                            </div>
+                            <div class="flex flex-wrap justify-center gap-3">
+                                <button onclick="togglePause()" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 md:py-3 px-4 md:px-6 rounded-lg transition">
+                                    ${state.isRunning ? 'Pause' : 'Resume'}
+                                </button>
+                                <button onclick="skipExercise()" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 md:py-3 px-4 md:px-6 rounded-lg transition">
+                                    Skip
+                                </button>
+                                <button onclick="reset()" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 md:py-3 px-4 md:px-6 rounded-lg transition">
+                                    Reset
+                                </button>
+                            </div>
+                        </div>
+                        <div class="mt-6 pt-6 border-t border-gray-200">
+                            <p class="text-xs text-gray-500 text-center">
+                                Next: ${state.currentExerciseIndex < cooldownExercises.length - 1 ? cooldownExercises[state.currentExerciseIndex + 1].name : 'Complete!'}
+                            </p>
+                        </div>
+                    </div>
+                `;
+            } else if (state.phase === 'complete') {
+                app.innerHTML = `
+                    <div class="bg-white rounded-lg shadow-xl p-6 md:p-8 text-center">
+                        <div class="text-6xl mb-4">🎉</div>
+                        <h2 class="text-3xl md:text-4xl font-bold text-green-600 mb-4">Workout Complete!</h2>
+                        <p class="text-lg md:text-xl text-gray-700 mb-2">Amazing job finishing all 3 rounds!</p>
+                        <p class="text-gray-600 mb-8">Time to cool down and stretch</p>
+                        <button onclick="reset()" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 md:py-4 px-6 md:px-8 rounded-lg text-lg md:text-xl transition">
+                            Start New Session
+                        </button>
+                    </div>
+                `;
+            }
+        }
+
+        function startTimer() {
+            if (state.interval) clearInterval(state.interval);
+            state.interval = setInterval(() => {
+                if (state.isRunning && state.timeLeft > 0) {
+                    // Audio cues
+                    if (state.timeLeft === 10) {
+                        speak("10 seconds remaining");
+                        beep(600);
+                    } else if (state.timeLeft === 5) {
+                        speak("5");
+                        beep(700);
+                    } else if (state.timeLeft === 4) {
+                        speak("4");
+                        beep(700);
+                    } else if (state.timeLeft === 3) {
+                        speak("3");
+                        beep(800);
+                    } else if (state.timeLeft === 2) {
+                        speak("2");
+                        beep(900);
+                    } else if (state.timeLeft === 1) {
+                        speak("1");
+                        beep(1000);
+                    }
+
+                    // Halfway announcement for double-time exercises
+                    if (state.phase === 'warmup' || state.phase === 'cooldown') {
+                        const exercises = state.phase === 'warmup' ? warmupExercises : cooldownExercises;
+                        const ex = exercises[state.currentExerciseIndex];
+                        if (ex.doubleTime) {
+                            const actualDuration = getActualDuration(ex);
+                            const halfTime = actualDuration / 2;
+                            if (state.timeLeft === halfTime && !state.halfwayAnnounced) {
+                                speak("Switch sides");
+                                beep(1200, 200);
+                                state.halfwayAnnounced = true;
+                            }
+                        }
+                    }
+
+                    state.timeLeft--;
+                    render();
+                } else if (state.timeLeft === 0 && state.isRunning) {
+                    handleTimerComplete();
+                }
+            }, 1000);
+        }
+
+        function handleTimerComplete() {
+            beep(1200, 300);
+            state.halfwayAnnounced = false;
+
+            if (state.phase === 'warmup') {
+                if (state.currentExerciseIndex < warmupExercises.length - 1) {
+                    state.currentExerciseIndex++;
+                    const ex = warmupExercises[state.currentExerciseIndex];
+                    state.timeLeft = getActualDuration(ex);
+                    speak(`Next exercise. ${ex.name}`);
+                } else {
+                    state.isRunning = false;
+                    state.phase = 'ready-workout';
+                    speak("Warm up complete. Ready for main workout");
+                }
+            } else if (state.phase === 'workout') {
+                if (state.isRest) {
+                    state.isRest = false;
+                    if (state.currentExerciseIndex < workoutExercises.length - 1) {
+                        state.currentExerciseIndex++;
+                        state.timeLeft = workoutExercises[state.currentExerciseIndex].work;
+                        speak(`Next exercise. ${workoutExercises[state.currentExerciseIndex].name}. Go!`);
+                    } else if (state.currentRound < state.totalRounds) {
+                        state.currentRound++;
+                        state.currentExerciseIndex = 0;
+                        state.timeLeft = workoutExercises[0].work;
+                        speak(`Round ${state.currentRound}. ${workoutExercises[0].name}. Go!`);
+                    } else {
+                        state.isRunning = false;
+                        state.phase = 'ready-cooldown';
+                        speak("Workout complete! Time to cool down");
+                    }
+                } else {
+                    state.isRest = true;
+                    state.timeLeft = workoutExercises[state.currentExerciseIndex].rest;
+                    speak("Rest");
+                }
+            } else if (state.phase === 'cooldown') {
+                if (state.currentExerciseIndex < cooldownExercises.length - 1) {
+                    state.currentExerciseIndex++;
+                    const ex = cooldownExercises[state.currentExerciseIndex];
+                    state.timeLeft = getActualDuration(ex);
+                    speak(`Next stretch. ${ex.name}`);
+                } else {
+                    state.isRunning = false;
+                    state.phase = 'complete';
+                    speak("Cool down complete. Great job!");
+                }
+            }
+            render();
+        }
+
+        function startWarmup() {
+            state.phase = 'warmup';
+            state.currentExerciseIndex = 0;
+            const ex = warmupExercises[0];
+            state.timeLeft = getActualDuration(ex);
+            state.isRunning = true;
+            state.halfwayAnnounced = false;
+            speak(`Starting warm up. ${ex.name}`);
+            startTimer();
+            render();
+        }
+
+        function startWorkout() {
+            state.phase = 'workout';
+            state.currentExerciseIndex = 0;
+            state.currentRound = 1;
+            state.isRest = false;
+            state.timeLeft = workoutExercises[0].work;
+            state.isRunning = true;
+            speak(`Starting workout. Round 1. ${workoutExercises[0].name}. Go!`);
+            startTimer();
+            render();
+        }
+
+        function startCooldown() {
+            state.phase = 'cooldown';
+            state.currentExerciseIndex = 0;
+            const ex = cooldownExercises[0];
+            state.timeLeft = getActualDuration(ex);
+            state.isRunning = true;
+            state.halfwayAnnounced = false;
+            speak(`Starting cool down. ${ex.name}`);
+            startTimer();
+            render();
+        }
+
+        function skipToWorkout() {
+            state.phase = 'ready-workout';
+            state.isRunning = false;
+            render();
+        }
+
+        function skipComplete() {
+            state.phase = 'complete';
+            speak("Great job!");
+            render();
+        }
+
+        function togglePause() {
+            state.isRunning = !state.isRunning;
+            if (state.isRunning) {
+                speak("Resume");
+            } else {
+                speak("Paused");
+            }
+            render();
+        }
+
+        function toggleAudio() {
+            state.audioEnabled = !state.audioEnabled;
+            render();
+        }
+
+        function skipExercise() {
+            speak("Skipping");
+            handleTimerComplete();
+        }
+
+        function reset() {
+            if (state.interval) clearInterval(state.interval);
+            window.speechSynthesis.cancel();
+            state = {
+                phase: 'ready',
+                isRunning: false,
+                timeLeft: 0,
+                currentExerciseIndex: 0,
+                currentRound: 1,
+                isRest: false,
+                totalRounds: 3,
+                interval: null,
+                audioEnabled: true,
+                beepPlayed: false,
+                halfwayAnnounced: false
+            };
+            render();
+        }
+
+        render();
+    </script>
+</body>
+</html>
