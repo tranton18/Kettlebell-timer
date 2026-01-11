@@ -32,7 +32,7 @@ This project helps me follow exercise sequences and track timing without relying
 - HTML
 
 ## Credits
-This project was created as a personal portfolio project with AI assistance (Claude).
+This project was created as a personal portfolio project with AI assistance (Claude) and edit with VScode.
 
 ## Image Credits
 Some exercise images used in this project are from publicly available sources and belong to their respective creators.
